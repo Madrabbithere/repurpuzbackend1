@@ -75,26 +75,35 @@ def get_transcript(req: TranscriptRequest):
     """Fetch transcript for a YouTube video. Returns plain text."""
     logger.info(f"[Transcript] Received request for video: {req.videoId}")
     
-    try:
-        logger.info(f"[Transcript] Creating YouTubeTranscriptApi instance...")
-        ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+    max_retries = 3
+    last_error = None
 
-        logger.info(f"[Transcript] Fetching transcript for: {req.videoId}")
-        transcript = ytt_api.fetch(req.videoId)
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(f"[Transcript] Attempt {attempt}/{max_retries} for video: {req.videoId}")
+            ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
 
-        snippets = list(transcript)
-        logger.info(f"[Transcript] Got {len(snippets)} segments, joining text...")
+            transcript = ytt_api.fetch(req.videoId)
 
-        full_text = " ".join(snippet.text for snippet in snippets)
+            snippets = list(transcript)
+            logger.info(f"[Transcript] Got {len(snippets)} segments, joining text...")
 
-        logger.info(f"[Transcript] Success! Returning {len(full_text)} chars")
-        return full_text
-    
-    except Exception as e:
-        error_msg = str(e)
-        error_type = type(e).__name__
-        logger.error(f"[Transcript Error] Type: {error_type}, Video: {req.videoId}, Error: {error_msg}")
-        raise HTTPException(status_code=500, detail=f"{error_type}: {error_msg}")
+            full_text = " ".join(snippet.text for snippet in snippets)
+
+            logger.info(f"[Transcript] Success on attempt {attempt}! Returning {len(full_text)} chars")
+            return full_text
+
+        except Exception as e:
+            last_error = e
+            error_type = type(e).__name__
+            logger.warning(f"[Transcript] Attempt {attempt} failed ({error_type}): {e}")
+            if attempt < max_retries:
+                logger.info(f"[Transcript] Retrying with new proxy IP...")
+
+    error_msg = str(last_error)
+    error_type = type(last_error).__name__
+    logger.error(f"[Transcript Error] All {max_retries} attempts failed for video: {req.videoId}, Last error: {error_type}: {error_msg}")
+    raise HTTPException(status_code=500, detail=f"{error_type}: {error_msg}")
 
 @app.get("/health")
 def health():
