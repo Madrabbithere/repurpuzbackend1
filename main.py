@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig
 from pydantic import BaseModel
 
 # Configure logging to stdout for Railway
@@ -22,6 +23,23 @@ logger.info(f"Python version: {sys.version}")
 logger.info(f"PORT env: {os.getenv('PORT', 'not set')}")
 logger.info(f"ALLOWED_ORIGINS env: {os.getenv('ALLOWED_ORIGINS', 'not set')}")
 logger.info("=" * 50)
+
+# Proxy configuration for youtube-transcript-api
+proxy_username = os.getenv("PROXY_USERNAME")
+proxy_password = os.getenv("PROXY_PASSWORD")
+proxy_host = os.getenv("PROXY_HOST", "geo.iproyal.com")
+proxy_port = os.getenv("PROXY_PORT", "12321")
+
+proxy_config = None
+if proxy_username and proxy_password:
+    proxy_url = f"http://{proxy_username}:{proxy_password}@{proxy_host}:{proxy_port}"
+    proxy_config = GenericProxyConfig(
+        http_url=proxy_url,
+        https_url=proxy_url,
+    )
+    logger.info(f"Proxy configured: {proxy_host}:{proxy_port}")
+else:
+    logger.warning("No proxy configured - requests will use server IP")
 
 app = FastAPI(title="YouTube Transcript Service")
 
@@ -59,17 +77,16 @@ def get_transcript(req: TranscriptRequest):
     
     try:
         logger.info(f"[Transcript] Creating YouTubeTranscriptApi instance...")
-        ytt_api = YouTubeTranscriptApi()
-        
+        ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+
         logger.info(f"[Transcript] Fetching transcript for: {req.videoId}")
         transcript = ytt_api.fetch(req.videoId)
-        
-        logger.info(f"[Transcript] Got {len(list(transcript))} segments, joining text...")
-        
-        # Need to re-fetch since we consumed the iterator
-        transcript = ytt_api.fetch(req.videoId)
-        full_text = " ".join(snippet.text for snippet in transcript)
-        
+
+        snippets = list(transcript)
+        logger.info(f"[Transcript] Got {len(snippets)} segments, joining text...")
+
+        full_text = " ".join(snippet.text for snippet in snippets)
+
         logger.info(f"[Transcript] Success! Returning {len(full_text)} chars")
         return full_text
     
